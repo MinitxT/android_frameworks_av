@@ -27,6 +27,8 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <fstream>
+#include <unistd.h>
 #include <sys/types.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -2931,6 +2933,16 @@ status_t CameraService::addOfflineClient(const std::string &cameraId,
 
     return OK;
 }
+namespace {
+    static const char* kTorchLevelPath =
+        "/sys/devices/virtual/flashlight_core/flashlight/flashlight_torch_level";
+    static const char* kTorchOnOffPath =
+        "/sys/devices/virtual/flashlight_core/flashlight/flashlight_torch";
+// slider level 1..7  ->  current in uA (min 25000, max 386000)
+    static const int32_t kTorchLevels[] = {
+    25000, 75000, 125000, 200000, 275000, 340000, 386000,
+};
+}
 
 Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolvedCameraId,
         int32_t torchStrength, const sp<IBinder>& clientBinder,
@@ -3013,12 +3025,55 @@ Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolved
                         cameraId.c_str());
             }
         }
+            }
     }
+
+    // === MTK torch strength via sysfs (PixelOS/MTK HAL is API par -ENOSYS
+    //     deta hai -> "has no flashlight" -> SystemUI crash). Isliye HAL call
+    //     se PEHLE hi intercept karke seedha sysfs likh do. ===
+    if (access(kTorchLevelPath, W_OK) == 0) {
+        {
+            Mutex::Autolock al(mTorchUidMapMutex);
+            updateTorchUidMapLocked(cameraId, uid);
+        }
+
+        int32_t level = torchStrength;
+        if (level <= 0) level = 3;      // default
+        if (level > 7)   level = 7;     // max
+
+        {
+            std::ofstream f(kTorchLevelPath);
+            f << kTorchLevels[level - 1];
+        }
+        {
+            std::ofstream f(kTorchOnOffPath);
+            f << "0 0 0 1";
+        }
+
+        {
+            Mutex::Autolock al(mTorchClientMapMutex);
+            ssize_t index = mTorchClientMap.indexOfKey(cameraId);
+            if (index == NAME_NOT_FOUND) {
+                mTorchClientMap.add(cameraId, clientBinder);
+            } else {
+                mTorchClientMap.valueAt(index)->unlinkToDeath(this);
+                mTorchClientMap.replaceValueAt(index, clientBinder);
+            }
+            clientBinder->linkToDeath(this);
+        }
+
+        ALOGI("%s: torch strength for camera %s set to %d via sysfs",
+                __FUNCTION__, cameraId.c_str(), level);
+        broadcastTorchStrengthLevel(cameraId, level);
+        return Status::ok();   // <-- HAL call BYPASS, crash khatam
+    }
+    // === end MTK torch strength via sysfs ===
 
     {
         Mutex::Autolock al(mTorchUidMapMutex);
         updateTorchUidMapLocked(cameraId, uid);
     }
+
 #ifdef DISABLE_TORCH_CONTROL
     bool shouldSkipTorchStrengthUpdates = false;
     status_t err = mFlashlight->setTorchMode(cameraId, (torchStrength > 0) ? 1 : 0);
