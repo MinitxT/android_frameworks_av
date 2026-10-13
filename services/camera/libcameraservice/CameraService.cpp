@@ -3048,14 +3048,21 @@ Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolved
     // === MTK torch strength via sysfs (PixelOS/MTK HAL is API par -ENOSYS
     //     deta hai -> "has no flashlight" -> SystemUI crash). Isliye HAL call
     //     se PEHLE hi intercept karke seedha sysfs likh do. ===
-    if (access(kTorchLevelPath, W_OK) == 0) {
+    {
         {
             Mutex::Autolock al(mTorchUidMapMutex);
             updateTorchUidMapLocked(cameraId, uid);
         }
 
         int32_t level = torchStrength;
-        if (level <= 0) level = 3;      // default
+               if (level <= 0) {
+            std::ofstream f(kTorchOnOffPath);
+            f << "0 0 0 0";
+            Mutex::Autolock al(mTorchUidMapMutex);
+            updateTorchUidMapLocked(cameraId, uid);
+            broadcastTorchStrengthLevel(cameraId, 0);
+            return Status::ok();
+        }
         if (level > 7)   level = 7;     // max
 
         {
