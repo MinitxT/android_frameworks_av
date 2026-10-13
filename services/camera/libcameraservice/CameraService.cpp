@@ -2947,7 +2947,7 @@ namespace {
 Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolvedCameraId,
         int32_t torchStrength, const sp<IBinder>& clientBinder,
         const AttributionSourceState& clientAttribution, int32_t devicePolicy) {
-    ATRACE_CALL();
+       ATRACE_CALL();
 
     if (isInvalidPolicy(devicePolicy)) {
         return STATUS_ERROR(ERROR_ILLEGAL_ARGUMENT,
@@ -2958,6 +2958,26 @@ Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolved
         return STATUS_ERROR(ERROR_ILLEGAL_ARGUMENT,
                 "Torch client binder in null.");
     }
+
+    // ==== BLOCK TORCH WHEN CAMERA IS IN USE ====
+    {
+        Mutex::Autolock preLock(mServiceLock);
+        std::optional<std::string> preCameraId = resolveCameraId(unresolvedCameraId,
+                clientAttribution.deviceId, devicePolicy);
+        if (preCameraId.has_value()) {
+            auto preState = getCameraState(preCameraId.value());
+            if (preState != nullptr &&
+                    preState->getStatus() == StatusInternal::NOT_AVAILABLE) {
+                ALOGI("%s: camera %s is in use, blocking torch",
+                        __FUNCTION__, preCameraId.value().c_str());
+                return STATUS_ERROR_FMT(ERROR_CAMERA_IN_USE,
+                        "Torch for camera \"%s\" is blocked because the camera is in use",
+                        preCameraId.value().c_str());
+            }
+        }
+    }
+    // ==== END BLOCK TORCH WHEN CAMERA IS IN USE ====
+
 
     Mutex::Autolock lock(mServiceLock);
 
