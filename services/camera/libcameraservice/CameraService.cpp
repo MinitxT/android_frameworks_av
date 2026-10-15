@@ -3152,15 +3152,17 @@ Status CameraService::turnOnTorchWithStrengthLevel(const std::string& unresolved
     int clientPid = getCallingPid();
     ALOGI("%s: Torch strength for camera id %s changed to %d for client PID %d",
             __FUNCTION__, cameraId.c_str(), torchStrength, clientPid);
-            if (!shouldSkipTorchStrengthUpdates) {
-            Mutex::Autolock al(mTorchUidMapMutex);
-            updateTorchUidMapLocked(cameraId, uid);
-            broadcastTorchStrengthLevel(cameraId, level);
+                        if (!shouldSkipTorchStrengthUpdates) {
+                Mutex::Autolock al(mTorchUidMapMutex);
+                updateTorchUidMapLocked(cameraId, uid);
+                broadcastTorchStrengthLevel(cameraId, level);
+            }
+            return Status::ok();
         }
-        return Status::ok();
     }
 
 Status CameraService::setTorchMode(const std::string& unresolvedCameraId, bool enabled,
+
         const sp<IBinder>& clientBinder, const AttributionSourceState& clientAttribution,
         int32_t devicePolicy) {
     ATRACE_CALL();
